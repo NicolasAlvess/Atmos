@@ -1,10 +1,9 @@
 // backend/src/server.ts
 import express from 'express';
 import cors from 'cors';
-import { db } from './firebase'; // Importamos a nossa ligação à base de dados
+import { db } from './firebase';
 
 const app = express();
-// O Render utiliza uma porta dinâmica que vem em process.env.PORT. Se não existir, usa a 3000 localmente.
 const PORT = process.env.PORT || 3000;
 
 app.use(cors());
@@ -20,18 +19,15 @@ app.post('/api/survey', async (req, res) => {
   try {
     const formData = req.body;
     
-    // Adicionamos a data e hora em que a pesquisa foi respondida
     const dataParaGravar = {
       ...formData,
       timestamp: new Date().toISOString()
     };
     
-    // Gravamos na coleção 'survey_responses' no Firestore
     const docRef = await db.collection('survey_responses').add(dataParaGravar);
     
     console.log('Nova resposta guardada com ID:', docRef.id);
     
-    // Devolvemos uma resposta de sucesso ao frontend
     res.status(201).json({ 
       message: 'Dados guardados com sucesso', 
       id: docRef.id 
@@ -48,8 +44,8 @@ app.get('/api/admin/responses', async (req, res) => {
   try {
     const snapshot = await db.collection('survey_responses').get();
     
-    // Mapeia os documentos do Firestore para um array de objetos
-    const responses = snapshot.docs.map(doc => ({
+    // Tipagem explícita no parâmetro doc para eliminar o erro do TS
+    const responses = snapshot.docs.map((doc: FirebaseFirestore.QueryDocumentSnapshot) => ({
       id: doc.id,
       ...doc.data()
     }));
