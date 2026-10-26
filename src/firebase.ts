@@ -1,15 +1,33 @@
-// src/firebase.ts
-import * as admin from 'firebase-admin';
 
-// Inicializa o Firebase usando as variáveis de ambiente do Render
-if (!admin.apps.length) {
-  admin.initializeApp({
-    credential: admin.credential.cert({
-      projectId: process.env.FIREBASE_PROJECT_ID,
-      clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
-      privateKey: process.env.FIREBASE_PRIVATE_KEY?.replace(/\\n/g, '\n'),
-    })
-  });
+import 'dotenv/config';
+
+import {
+  getApps,
+  initializeApp,
+  cert
+} from 'firebase-admin/app';
+
+import { getFirestore } from 'firebase-admin/firestore';
+
+const projectId = process.env.FIREBASE_PROJECT_ID;
+const clientEmail = process.env.FIREBASE_CLIENT_EMAIL;
+const privateKey = process.env.FIREBASE_PRIVATE_KEY;
+
+if (!projectId || !clientEmail || !privateKey) {
+  throw new Error(
+    'Faltam variáveis de ambiente do Firebase no Render.'
+  );
 }
 
-export const db = admin.firestore();
+const app =
+  getApps().length > 0
+    ? getApps()[0]
+    : initializeApp({
+        credential: cert({
+          projectId,
+          clientEmail,
+          privateKey: privateKey.replace(/\\n/g, '\n')
+        })
+      });
+
+export const db = getFirestore(app);
