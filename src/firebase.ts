@@ -1,4 +1,3 @@
-
 import 'dotenv/config';
 
 import {
@@ -9,9 +8,10 @@ import {
 
 import { getFirestore } from 'firebase-admin/firestore';
 
-const projectId = process.env.FIREBASE_PROJECT_ID;
-const clientEmail = process.env.FIREBASE_CLIENT_EMAIL;
-const privateKey = process.env.FIREBASE_PRIVATE_KEY;
+// Limpeza rigorosa para remover aspas duplas invisíveis e espaços injetados pelo Render
+const projectId = process.env.FIREBASE_PROJECT_ID?.replace(/"/g, '').trim();
+const clientEmail = process.env.FIREBASE_CLIENT_EMAIL?.replace(/"/g, '').trim();
+const privateKey = process.env.FIREBASE_PRIVATE_KEY?.replace(/"/g, '').replace(/\\n/g, '\n').trim();
 
 if (!projectId || !clientEmail || !privateKey) {
   throw new Error(
@@ -26,7 +26,7 @@ const app =
         credential: cert({
           projectId,
           clientEmail,
-          privateKey: privateKey.replace(/\\n/g, '\n')
+          privateKey
         })
       });
 
