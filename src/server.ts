@@ -8,7 +8,7 @@ import type { QueryDocumentSnapshot } from 'firebase-admin/firestore';
 
 import { db } from './firebase';
 import { requireAuth, type AuthenticatedRequest } from './auth';
-import { generateDiagnosis, type SurveyResponse } from './diagnosis';
+import { generateDiagnosis, type SurveyResponse, type DiagnosisResult } from './diagnosis';
 import { randomSuffix, slugify } from './slug';
 
 const app = express();
@@ -296,6 +296,60 @@ app.post('/api/admin/rounds', requireAuth, async (req: AuthenticatedRequest, res
   } catch (error) {
     console.error('Erro ao criar rodada:', error);
     res.status(500).json({ error: 'Erro interno ao criar a rodada.' });
+  }
+});
+
+// Evolução da média geral ao longo das rodadas, para o gráfico de tendência no dashboard.
+app.get('/api/admin/rounds/trend', requireAuth, async (req: AuthenticatedRequest, res) => {
+  try {
+    const companyId = req.companyId as string;
+    const [responses, rounds] = await Promise.all([
+      getCompanyResponses(companyId),
+      getCompanyRounds(companyId)
+    ]);
+
+    const points: Array<{
+      id: string;
+      label: string;
+      startedAt: string | null;
+      mediaGeral: number;
+      totalRespostas: number;
+    }> = [];
+
+    if (rounds.length > 0) {
+      const beforeFirstRound = responses.filter((response) => {
+        const timestamp = response.timestamp as string | undefined;
+        return !!timestamp && timestamp < rounds[0].startedAt;
+      });
+
+      if (beforeFirstRound.length > 0) {
+        const diagnosis: DiagnosisResult = generateDiagnosis(beforeFirstRound);
+        points.push({
+          id: 'antes-das-rodadas',
+          label: 'Antes das rodadas',
+          startedAt: null,
+          mediaGeral: diagnosis.mediaGeral,
+          totalRespostas: diagnosis.totalRespostas
+        });
+      }
+    }
+
+    rounds.forEach((round) => {
+      const filtered = filterResponsesByRound(responses, rounds, round.id);
+      const diagnosis: DiagnosisResult = generateDiagnosis(filtered);
+      points.push({
+        id: round.id,
+        label: round.label,
+        startedAt: round.startedAt,
+        mediaGeral: diagnosis.mediaGeral,
+        totalRespostas: diagnosis.totalRespostas
+      });
+    });
+
+    res.status(200).json(points);
+  } catch (error) {
+    console.error('Erro ao calcular a evolução das rodadas:', error);
+    res.status(500).json({ error: 'Erro interno ao calcular a evolução das rodadas.' });
   }
 });
 
