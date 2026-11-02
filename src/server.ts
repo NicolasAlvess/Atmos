@@ -3,6 +3,7 @@ import 'dotenv/config';
 
 import express from 'express';
 import cors from 'cors';
+import rateLimit from 'express-rate-limit';
 import type { QueryDocumentSnapshot } from 'firebase-admin/firestore';
 
 import { db } from './firebase';
@@ -13,8 +14,22 @@ import { randomSuffix, slugify } from './slug';
 const app = express();
 const PORT = process.env.PORT || 3000;
 
+// Necessário no Render (atrás de proxy) para o rate limiter identificar o IP real do cliente.
+app.set('trust proxy', 1);
+
 app.use(cors());
 app.use(express.json());
+
+// Evita abuso/spam no envio de respostas da pesquisa: permite rajadas
+// legítimas (vários colaboradores atrás do mesmo IP de escritório),
+// mas bloqueia envios automatizados em massa.
+const surveySubmitLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  limit: 30,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Muitas respostas enviadas deste local em pouco tempo. Tente novamente em alguns minutos.' }
+});
 
 // Rota de teste do servidor
 app.get('/api/status', (req, res) => {
@@ -94,7 +109,7 @@ app.get('/api/companies/:slug', async (req, res) => {
 });
 
 // Receber e gravar as respostas do questionário
-app.post('/api/survey', async (req, res) => {
+app.post('/api/survey', surveySubmitLimiter, async (req, res) => {
   try {
     const { slug, ...formData } = req.body as { slug?: string } & Record<string, unknown>;
 
@@ -146,10 +161,63 @@ async function getCompanyResponses(companyId: string): Promise<SurveyResponse[]>
   })) as SurveyResponse[];
 }
 
+interface SurveyRound {
+  id: string;
+  label: string;
+  startedAt: string;
+}
+
+// Rodadas ordenadas da mais antiga para a mais recente (facilita calcular os limites de cada período)
+async function getCompanyRounds(companyId: string): Promise<SurveyRound[]> {
+  const snapshot = await db
+    .collection('companies')
+    .doc(companyId)
+    .collection('rounds')
+    .orderBy('startedAt', 'asc')
+    .get();
+
+  return snapshot.docs.map((doc: QueryDocumentSnapshot) => ({
+    id: doc.id,
+    ...doc.data()
+  })) as SurveyRound[];
+}
+
+// Filtra as respostas de uma rodada específica pelo intervalo de tempo entre o início dela
+// e o início da próxima (ou até agora, se for a rodada mais recente).
+function filterResponsesByRound(
+  responses: SurveyResponse[],
+  rounds: SurveyRound[],
+  roundId: string
+): SurveyResponse[] {
+  const index = rounds.findIndex((round) => round.id === roundId);
+
+  if (index === -1) {
+    return responses;
+  }
+
+  const start = rounds[index].startedAt;
+  const end = rounds[index + 1]?.startedAt;
+
+  return responses.filter((response) => {
+    const timestamp = response.timestamp as string | undefined;
+    if (!timestamp) return false;
+    return timestamp >= start && (!end || timestamp < end);
+  });
+}
+
 // Buscar todas as respostas da empresa logada para o dashboard de BI
 app.get('/api/admin/responses', requireAuth, async (req: AuthenticatedRequest, res) => {
   try {
-    const responses = await getCompanyResponses(req.companyId as string);
+    const companyId = req.companyId as string;
+    const roundId = req.query.roundId as string | undefined;
+
+    let responses = await getCompanyResponses(companyId);
+
+    if (roundId) {
+      const rounds = await getCompanyRounds(companyId);
+      responses = filterResponsesByRound(responses, rounds, roundId);
+    }
+
     res.status(200).json(responses);
   } catch (error) {
     console.error('Erro ao buscar dados no Firebase:', error);
@@ -180,12 +248,54 @@ app.get('/api/admin/company', requireAuth, async (req: AuthenticatedRequest, res
 // Gerar o diagnóstico de clima e o plano de intervenção da empresa logada
 app.get('/api/admin/diagnosis', requireAuth, async (req: AuthenticatedRequest, res) => {
   try {
-    const responses = await getCompanyResponses(req.companyId as string);
+    const companyId = req.companyId as string;
+    const roundId = req.query.roundId as string | undefined;
+
+    let responses = await getCompanyResponses(companyId);
+
+    if (roundId) {
+      const rounds = await getCompanyRounds(companyId);
+      responses = filterResponsesByRound(responses, rounds, roundId);
+    }
+
     const diagnosis = generateDiagnosis(responses);
     res.status(200).json(diagnosis);
   } catch (error) {
     console.error('Erro ao gerar diagnóstico:', error);
     res.status(500).json({ error: 'Erro interno ao gerar o diagnóstico.' });
+  }
+});
+
+// Listar as rodadas de pesquisa da empresa logada (mais recente primeiro)
+app.get('/api/admin/rounds', requireAuth, async (req: AuthenticatedRequest, res) => {
+  try {
+    const rounds = await getCompanyRounds(req.companyId as string);
+    res.status(200).json(rounds.slice().reverse());
+  } catch (error) {
+    console.error('Erro ao buscar rodadas:', error);
+    res.status(500).json({ error: 'Erro interno ao buscar as rodadas.' });
+  }
+});
+
+// Iniciar uma nova rodada de pesquisa: tudo que for respondido a partir de agora
+// passa a contar para essa rodada, até que uma próxima seja criada.
+app.post('/api/admin/rounds', requireAuth, async (req: AuthenticatedRequest, res) => {
+  try {
+    const { label } = req.body as { label?: string };
+    const companyId = req.companyId as string;
+
+    const roundsRef = db.collection('companies').doc(companyId).collection('rounds');
+    const existing = await roundsRef.get();
+    const roundNumber = existing.size + 1;
+    const finalLabel = label?.trim() || `Rodada ${roundNumber}`;
+    const startedAt = new Date().toISOString();
+
+    const docRef = await roundsRef.add({ label: finalLabel, startedAt });
+
+    res.status(201).json({ id: docRef.id, label: finalLabel, startedAt });
+  } catch (error) {
+    console.error('Erro ao criar rodada:', error);
+    res.status(500).json({ error: 'Erro interno ao criar a rodada.' });
   }
 });
 
