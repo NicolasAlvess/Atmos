@@ -21,11 +21,12 @@ app.use(cors());
 app.use(express.json());
 
 // Evita abuso/spam no envio de respostas da pesquisa: permite rajadas
-// legítimas (vários colaboradores atrás do mesmo IP de escritório),
-// mas bloqueia envios automatizados em massa.
+// legítimas (ex: uma empresa inteira respondendo durante uma reunião,
+// todos atrás do mesmo IP de escritório), mas bloqueia envios
+// automatizados em massa.
 const surveySubmitLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  limit: 30,
+  limit: 150,
   standardHeaders: true,
   legacyHeaders: false,
   message: { error: 'Muitas respostas enviadas deste local em pouco tempo. Tente novamente em alguns minutos.' }
