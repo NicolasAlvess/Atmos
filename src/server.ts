@@ -66,11 +66,14 @@ app.post('/api/companies', requireAuth, async (req: AuthenticatedRequest, res) =
     const companyId = req.companyId as string;
     const baseSlug = slugify(name) || 'empresa';
 
-    let slug = baseSlug;
+    // Sempre inclui um sufixo aleatório no link da pesquisa, mesmo sem colisão de nomes:
+    // caso contrário, qualquer pessoa que souber o nome da empresa adivinharia a URL
+    // (ex: "minha-empresa") e poderia responder a pesquisa sem ter recebido o link.
+    let slug = `${baseSlug}-${randomSuffix(6)}`;
     let attempts = 0;
 
     while (await findCompanyBySlug(slug)) {
-      slug = `${baseSlug}-${randomSuffix()}`;
+      slug = `${baseSlug}-${randomSuffix(6)}`;
       attempts += 1;
 
       if (attempts > 5) {
